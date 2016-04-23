@@ -1,0 +1,13 @@
+[package]
+authors = ["Mikkel Kroman <mk@uplink.io>"]
+name = "soundcloud"
+version = "0.1.0"
+
+[dependencies]
+env_logger = "0.3.3"
+hyper = "0.9.1"
+log = "0.3.6"
+serde = "0.7.0"
+serde_json = "0.7.0"
+serde_macros = "0.7.2"
+url = "1.0.0"
