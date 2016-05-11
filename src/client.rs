@@ -9,12 +9,15 @@
 
 use url::Url;
 use hyper;
-use serde_json;
 
-use std::io::Read;
+use std::result;
 use std::borrow::Borrow;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::fs::File;
 
 use track::{Track, TrackRequestBuilder};
+use error::{Error, Result};
 
 pub type Params<'a, K, V> = &'a [(K, V)];
 
@@ -73,19 +76,25 @@ pub struct User {
 }
 
 impl Client {
+    /// Constructs a new client with the provided client id.
     pub fn new(client_id: &str) -> Client {
+        let mut client = hyper::Client::new();
+        client.set_redirect_policy(hyper::client::RedirectPolicy::FollowNone);
+
         Client {
             client_id: client_id.to_owned(),
-            http_client: hyper::Client::new(),
+            http_client: client,
         }
     }
 
-    pub fn get_client_id(&self) -> &str {
+    /// Returns the client id.
+    pub fn client_id(&self) -> &str {
         &self.client_id
     }
 
-    pub fn get<I, K, V>(&mut self, path: &str, params: Option<I>)
-        -> Result<hyper::client::Response, hyper::Error>
+    /// Sends a HTTP GET request to the API endpoint.
+    pub fn get<I, K, V>(&self, path: &str, params: Option<I>)
+        -> result::Result<hyper::client::Response, hyper::Error>
     where I: IntoIterator, I::Item: Borrow<(K, V)>, K: AsRef<str>, V: AsRef<str> {
         let mut url = Url::parse(&format!("https://{}{}", super::API_HOST, path)).unwrap();
 
@@ -100,24 +109,111 @@ impl Client {
 
         debug!("get {}", url);
 
-        let response = self.http_client.get(url).send();
+        let mut response = self.http_client.get(url).send();
         response
     }
 
-    /// Request a track with a given ID.
-    pub fn get_track(&mut self, track_id: usize) -> Option<Track> {
-        let params: Option<Params<&str, &str>> = None;
-        let mut request = self.get(&format!("/tracks/{}", track_id), params).unwrap();
-        let mut buffer = String::new();
+    pub fn download<P>(&self, track: &Track, path: P) -> Result<usize>
+        where P: AsRef<Path> {
+        use std::io::ErrorKind;
+        use hyper::header::Location;
 
-        request.read_to_string(&mut buffer).unwrap();
+        if !track.downloadable || !track.download_url.is_some() {
+            return Err(Error::TrackNotDownloadable);
+        }
 
-        match serde_json::from_str(&buffer) {
-            Ok(track) => Some(track),
-            Err(serde_json::Error::Syntax(serde_json::ErrorCode::MissingField(_), _, _)) => {
-                None
-            },
-            _ => None
+        let mut url = Url::parse(track.download_url.as_ref().unwrap()).unwrap();
+        url.query_pairs_mut().append_pair("client_id", &self.client_id);
+
+        let mut file = try!(File::create(path.as_ref()));
+        let mut response = try!(self.http_client.get(url).send());
+        let mut buffer = [0; 16384];
+        let mut len = 0;
+        let ret;
+
+        // Follow the redirect just this once.
+        if let Some(header) = response.headers.get::<Location>().cloned() {
+            response = try!(self.http_client.get(Url::parse(&header).unwrap()).send());
+        }
+
+        loop {
+            match response.read(&mut buffer) {
+                Ok(0) => {
+                    ret = Ok(len);
+                    break;
+                },
+                Ok(n) => {
+                    len += n;
+                    try!(file.write_all(&mut buffer[..n]));
+                },
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => {},
+                Err(e) => {
+                    ret = Err(e.into());
+                    break;
+                }
+            }
+        }
+
+        ret
+    }
+
+    pub fn stream<F>(&self, track: &Track, mut callback: F) -> Result<usize>
+        where F: FnMut(&[u8]) {
+        use std::io::ErrorKind;
+        use hyper::header::Location;
+
+        if !track.streamable || !track.stream_url.is_some() {
+            return Err(Error::TrackNotStreamable);
+        }
+
+        let mut url = Url::parse(track.stream_url.as_ref().unwrap()).unwrap();
+        url.query_pairs_mut().append_pair("client_id", &self.client_id);
+
+        let mut response = try!(self.http_client.get(url).send());
+        let mut buffer = [0; 16384];
+        let mut len = 0;
+        let ret;
+
+        // Follow the redirect just this once.
+        if let Some(header) = response.headers.get::<Location>().cloned() {
+            response = try!(self.http_client.get(Url::parse(&header).unwrap()).send());
+        }
+
+        loop {
+            match response.read(&mut buffer) {
+                Ok(0) => {
+                    ret = Ok(len);
+                    break;
+                },
+                Ok(n) => {
+                    len += n;
+                    callback(&mut buffer[..n]);
+                },
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => {},
+                Err(e) => {
+                    ret = Err(e.into());
+                    break;
+                }
+            }
+        }
+
+        ret
+    }
+
+    /// Resolves any soundcloud resource and returns it as a `Url`.
+    pub fn resolve(&self, url: &str) -> Result<Url> {
+        use hyper::header::Location;
+        let request = self.get("/resolve", Some(&[("url", url)]));
+
+        match request {
+            Ok(response) => {
+                if let Some(header) = response.headers.get::<Location>() {
+                    return Ok(Url::parse(header).unwrap());
+                } else {
+                    return Err(Error::ApiError("expected location header".to_owned()));
+                }
+            }
+            Err(e) => return Err(e.into()),
         }
     }
 
@@ -129,10 +225,56 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
     use super::*;
-    use std::io::Read;
 
     fn client() -> Client {
         Client::new(env!("SOUNDCLOUD_CLIENT_ID"))
+    }
+
+    #[test]
+    fn test_resolve_track() {
+        let result = client().resolve("https://soundcloud.com/isqa/tree-eater-1");
+
+        assert_eq!(result.unwrap(),
+            Url::parse(&format!("https://api.soundcloud.com/tracks/262976655?client_id={}", 
+                                env!("SOUNDCLOUD_CLIENT_ID"))).unwrap());
+    }
+
+    #[test]
+    fn test_get_tracks() {
+        let result = client().tracks().query(Some("d0df0dt snuffx")).get();
+
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_get_track() {
+        let track = client().tracks().id(18201932).get().unwrap();
+
+        assert_eq!(track.id, 18201932);
+    }
+
+    #[test]
+    fn test_download_track() {
+        let client = client();
+        let track = client.tracks().id(262681089).get().unwrap();
+        let ret = client.download(&track, "hi.mp3");
+
+        assert!(ret.unwrap() > 0);
+    }
+
+    #[test]
+    fn test_stream_track() {
+        let client = client();
+        let track = client.tracks().id(262681089).get().unwrap();
+        let mut size = 0;
+        
+        let ret = client.stream(&track, |chunk: &[u8]| size += chunk.len());
+
+        let res = ret.unwrap();
+
+        assert!(size == res);
+        assert!(res > 0);
     }
 }

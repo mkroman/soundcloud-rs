@@ -74,7 +74,7 @@ pub struct Track {
     pub tags: Option<String>,
     pub label_id: Option<u64>,
     pub label_name: Option<String>,
-    pub release: Option<u64>,
+    pub release: Option<String>,
     pub release_day: Option<u64>,
     pub release_month: Option<u64>,
     pub release_year: Option<u64>,
@@ -83,7 +83,7 @@ pub struct Track {
     pub purchase_title: Option<String>,
     pub state: String,
     pub license: String,
-    pub track_type: String,
+    pub track_type: Option<String>,
     pub waveform_url: String,
     pub download_url: Option<String>,
     pub stream_url: Option<String>,
@@ -102,6 +102,7 @@ pub struct Track {
     pub asset_data: Option<Vec<u8>>,
     pub artwork_data: Option<Vec<u8>>,
     pub user_favorite: Option<bool>,
+    pub likes_count: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -118,7 +119,31 @@ pub struct TrackRequestBuilder<'a> {
     types: Option<String>
 }
 
+#[derive(Debug)]
+pub struct SingleTrackBuilder<'a> {
+    client: &'a Client,
+    pub id: usize,
+}
+
+impl<'a> SingleTrackBuilder<'a> {
+    /// Sends the request and return the tracks.
+    pub fn get(&mut self) -> Result<Track, Error> {
+        let no_params: Option<&[(&str, &str)]> = None;
+        let response = try!(self.client.get(&format!("/tracks/{}", self.id), no_params));
+        let track: Track = try!(serde_json::from_reader(response));
+
+        Ok(track)
+    }
+
+    pub fn request_url(&self) -> Url {
+        let url = Url::parse(&format!("https://{}/tracks/{}", super::API_HOST, self.id)).unwrap();
+
+        url
+    }
+}
+
 impl<'a> TrackRequestBuilder<'a> {
+    /// Creates a new track request builder, with no parameters.
     pub fn new(client: &'a Client) -> TrackRequestBuilder {
         TrackRequestBuilder {
             client: client,
@@ -134,78 +159,107 @@ impl<'a> TrackRequestBuilder<'a> {
         }
     }
 
-    pub fn query(&mut self, query: Option<&str>) -> &'a mut TrackRequestBuilder {
+    /// Sets the search query filter, which will only return tracks with a matching query.
+    pub fn query(&'a mut self, query: Option<&str>) -> &mut TrackRequestBuilder {
         self.query = query.map(|x| x.to_owned());
         self
     }
 
-    pub fn tags(&'a mut self, tags: Option<Vec<&str>>) -> &'a mut TrackRequestBuilder {
+    /// Sets the tags filter, which will only return tracks with a matching tag.
+    pub fn tags(&'a mut self, tags: Option<Vec<&str>>) -> &mut TrackRequestBuilder {
         self.tags = tags.map(|x| x.join(","));
         self
     }
 
+    /// Sets whether to filter private or public tracks.
     pub fn filter(&'a mut self, filter: Option<Filter>) -> &mut TrackRequestBuilder {
         self.filter = filter;
         self
     }
 
+    /// Sets the license filter.
     pub fn license(&'a mut self, license: Option<&str>) -> &mut TrackRequestBuilder {
         self.license = license.map(|x| x.to_owned());
         self
     }
 
+    /// Sets a list of track ids to look up.
     pub fn ids(&'a mut self, ids: Option<Vec<usize>>) -> &mut TrackRequestBuilder {
         self.ids = ids;
         self
     }
 
-    pub fn get(&mut self) -> Result<(), ()> {
-        debug!("get {}", self.request_url());
-        Ok(())
+    /// Returns a builder for a single track.
+    pub fn id(&'a mut self, id: usize) -> SingleTrackBuilder {
+        SingleTrackBuilder {
+            client: &self.client,
+            id: id,
+        }
     }
 
-    fn request_url(&self) -> Url {
-        let mut url = Url::parse(&format!("https://{}/tracks", super::API_HOST)).unwrap();
+    /// Sends the request and return the tracks.
+    pub fn get(&mut self) -> Result<Option<Vec<Track>>, Error> {
+        use serde_json::Value;
 
-        {
-            let mut query_pairs = url.query_pairs_mut();
-            query_pairs.append_pair("client_id", &self.client.get_client_id());
+        let response = try!(self.client.get("/tracks", Some(self.request_params())));
+        let track_list: Value = try!(serde_json::from_reader(response));
 
-            if let Some(ref query) = self.query {
-                query_pairs.append_pair("q", &query);
-            }
+        if let Some(track_list) = track_list.as_array() {
+            if track_list.is_empty() {
+                return Ok(None);
+            } else {
+               let tracks: Vec<Track> = track_list
+                    .iter().map(|t| serde_json::from_value::<Track>(t.clone()).unwrap()).collect();
 
-            if let Some(ref tags) = self.tags {
-                query_pairs.append_pair("tags", &tags);
-            }
-
-            if let Some(ref filter) = self.filter {
-                query_pairs.append_pair("filter", filter.to_str());
-            }
-
-            if let Some(ref ids) = self.ids {
-                let ids_as_strings: Vec<String> = ids.iter().map(|id| format!("{}", id)).collect();
-
-                query_pairs.append_pair("ids", &ids_as_strings.join(","));
-            }
-
-            if let Some(ref duration) = self.duration {
-                unimplemented!();
-            }
-
-            if let Some(ref bpm) = self.bpm {
-                unimplemented!();
-            }
-
-            if let Some(ref genres) = self.genres {
-                query_pairs.append_pair("genres", &genres);
-            }
-
-            if let Some(ref types) = self.types {
-                query_pairs.append_pair("types", &types);
+                return Ok(Some(tracks)); 
             }
         }
 
-        url
+        return Err(Error::ApiError("expected response to be an array".to_owned()));
+    }
+
+    fn request_params(&self) -> Vec<(&str, String)> {
+        let mut result = vec![];
+
+        if let Some(ref query) = self.query {
+            result.push(("q", query.clone()));
+        }
+
+        if let Some(ref tags) = self.tags {
+            result.push(("tags", tags.clone()));
+        }
+
+        if let Some(ref filter) = self.filter {
+            result.push(("filter", filter.to_str().to_owned()));
+        }
+
+        if let Some(ref ids) = self.ids {
+            let ids_as_strings: Vec<String> = ids.iter().map(|id| format!("{}", id)).collect();
+            result.push(("ids", ids_as_strings.join(",")));
+        }
+
+        if let Some(ref _duration) = self.duration {
+            unimplemented!();
+        }
+
+        if let Some(ref _bpm) = self.bpm {
+            unimplemented!();
+        }
+
+        if let Some(ref genres) = self.genres {
+            result.push(("genres", genres.clone()));
+        }
+
+        if let Some(ref types) = self.types {
+            result.push(("types", types.clone()));
+        }
+
+        result
+    }
+}
+
+impl PartialEq for Track {
+    fn eq(&self, other: &Track) -> bool {
+        other.id == self.id
     }
 }

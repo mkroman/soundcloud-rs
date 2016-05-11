@@ -13,11 +13,18 @@ extern crate hyper;
 extern crate serde;
 extern crate serde_json;
 
+/// The host address for the API.
 pub const API_HOST: &'static str = "api.soundcloud.com";
 
 pub mod error;
 pub mod client;
 pub mod track;
+
+pub enum Resource {
+    Track(track::Track),
+}
+
+pub use client::Client;
 
 #[cfg(test)]
 mod tests {
