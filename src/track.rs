@@ -13,7 +13,7 @@ use std::str;
 use url::Url;
 use serde_json;
 
-use error::Error;
+use error::{Error, Result};
 use client::{Client, User, App};
 
 #[derive(Debug)]
@@ -26,7 +26,7 @@ pub enum Filter {
 impl str::FromStr for Filter {
     type Err = Error;
 
-    fn from_str(s: &str) -> Result<Filter, Error> {
+    fn from_str(s: &str) -> Result<Filter> {
         match s {
             "all" => Ok(Filter::All),
             "public" => Ok(Filter::Public),
@@ -54,7 +54,7 @@ impl Filter {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Track {
-    //pub kind: String,
+    /// Integer ID.
     pub id: u64,
     pub created_at: String,
     pub user_id: u64,
@@ -120,14 +120,22 @@ pub struct TrackRequestBuilder<'a> {
 }
 
 #[derive(Debug)]
-pub struct SingleTrackBuilder<'a> {
+pub struct SingleTrackRequestBuilder<'a> {
     client: &'a Client,
     pub id: usize,
 }
 
-impl<'a> SingleTrackBuilder<'a> {
+impl<'a> SingleTrackRequestBuilder<'a> {
+    /// Constructs a new track request.
+    pub fn new(client: &'a Client, id: usize) -> SingleTrackRequestBuilder {
+        SingleTrackRequestBuilder {
+            client: client,
+            id: id,
+        }
+    }
+
     /// Sends the request and return the tracks.
-    pub fn get(&mut self) -> Result<Track, Error> {
+    pub fn get(&mut self) -> Result<Track> {
         let no_params: Option<&[(&str, &str)]> = None;
         let response = try!(self.client.get(&format!("/tracks/{}", self.id), no_params));
         let track: Track = try!(serde_json::from_reader(response));
@@ -142,8 +150,9 @@ impl<'a> SingleTrackBuilder<'a> {
     }
 }
 
+
 impl<'a> TrackRequestBuilder<'a> {
-    /// Creates a new track request builder, with no parameters.
+    /// Creates a new track request builder, with no set parameters.
     pub fn new(client: &'a Client) -> TrackRequestBuilder {
         TrackRequestBuilder {
             client: client,
@@ -160,14 +169,28 @@ impl<'a> TrackRequestBuilder<'a> {
     }
 
     /// Sets the search query filter, which will only return tracks with a matching query.
-    pub fn query(&'a mut self, query: Option<&str>) -> &mut TrackRequestBuilder {
-        self.query = query.map(|x| x.to_owned());
+    pub fn query<S>(&'a mut self, query: Option<S>) -> &mut TrackRequestBuilder
+        where S: AsRef<str> {
+        self.query = query.map(|s| s.as_ref().to_owned());
         self
     }
 
     /// Sets the tags filter, which will only return tracks with a matching tag.
-    pub fn tags(&'a mut self, tags: Option<Vec<&str>>) -> &mut TrackRequestBuilder {
-        self.tags = tags.map(|x| x.join(","));
+    pub fn tags<I, T>(&'a mut self, tags: Option<I>) -> &mut TrackRequestBuilder
+        where I: AsRef<[T]>, T: AsRef<str> {
+        self.tags = tags.map(|s| {
+            let tags_as_ref: Vec<_> = s.as_ref().iter().map(T::as_ref).collect();
+            tags_as_ref.join(",")
+        });
+        self
+    }
+
+    pub fn genres<I, T>(&'a mut self, genres: Option<I>) -> &mut TrackRequestBuilder
+        where I: AsRef<[T]>, T: AsRef<str> {
+        self.genres = genres.map(|s| {
+            let genres_as_ref: Vec<_> = s.as_ref().iter().map(T::as_ref).collect();
+            genres_as_ref.join(",")
+        });
         self
     }
 
@@ -178,8 +201,8 @@ impl<'a> TrackRequestBuilder<'a> {
     }
 
     /// Sets the license filter.
-    pub fn license(&'a mut self, license: Option<&str>) -> &mut TrackRequestBuilder {
-        self.license = license.map(|x| x.to_owned());
+    pub fn license<S: AsRef<str>>(&'a mut self, license: Option<S>) -> &mut TrackRequestBuilder {
+        self.license = license.map(|s| s.as_ref().to_owned());
         self
     }
 
@@ -190,15 +213,16 @@ impl<'a> TrackRequestBuilder<'a> {
     }
 
     /// Returns a builder for a single track.
-    pub fn id(&'a mut self, id: usize) -> SingleTrackBuilder {
-        SingleTrackBuilder {
+    pub fn id(&'a mut self, id: usize) -> SingleTrackRequestBuilder {
+        SingleTrackRequestBuilder {
             client: &self.client,
             id: id,
         }
     }
 
-    /// Sends the request and return the tracks.
-    pub fn get(&mut self) -> Result<Option<Vec<Track>>, Error> {
+    /// Performs the request and returns a list of tracks if there are any results, None otherwise,
+    /// or an error if one occurred.
+    pub fn get(&mut self) -> Result<Option<Vec<Track>>> {
         use serde_json::Value;
 
         let response = try!(self.client.get("/tracks", Some(self.request_params())));

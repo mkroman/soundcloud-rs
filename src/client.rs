@@ -12,11 +12,9 @@ use hyper;
 
 use std::result;
 use std::borrow::Borrow;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::fs::File;
+use std::io::{self, Write};
 
-use track::{Track, TrackRequestBuilder};
+use track::{Track, TrackRequestBuilder, SingleTrackRequestBuilder};
 use error::{Error, Result};
 
 pub type Params<'a, K, V> = &'a [(K, V)];
@@ -76,7 +74,15 @@ pub struct User {
 }
 
 impl Client {
-    /// Constructs a new client with the provided client id.
+    /// Constructs a new `Client` with the provided `client_id`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soundcloud::Client;
+    ///
+    /// let client = Client::new(env!("SOUNDCLOUD_CLIENT_ID"));
+    /// ```
     pub fn new(client_id: &str) -> Client {
         let mut client = hyper::Client::new();
         client.set_redirect_policy(hyper::client::RedirectPolicy::FollowNone);
@@ -92,7 +98,27 @@ impl Client {
         &self.client_id
     }
 
-    /// Sends a HTTP GET request to the API endpoint.
+    /// Creates and sends a HTTP GET request to the API endpoint.
+    ///
+    /// A `client_id` parameter will automatically be added to the request.
+    ///
+    /// Returns the HTTP response on success, an error otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Read;
+    /// use soundcloud::Client;
+    /// let client = Client::new(env!("SOUNDCLOUD_CLIENT_ID"));
+    /// let response = client.get("/resolve", Some(&[("url",
+    /// "https://soundcloud.com/firepowerrecs/afk-shellshock-kamikaze-promo-mix-lock-load-series-vol-20")]));
+    ///
+    /// let mut buffer = String::new();
+    ///
+    /// response.unwrap().read_to_string(&mut buffer);
+    ///
+    /// assert!(!buffer.is_empty());
+    /// ```
     pub fn get<I, K, V>(&self, path: &str, params: Option<I>)
         -> result::Result<hyper::client::Response, hyper::Error>
     where I: IntoIterator, I::Item: Borrow<(K, V)>, K: AsRef<str>, V: AsRef<str> {
@@ -109,103 +135,54 @@ impl Client {
 
         debug!("get {}", url);
 
-        let mut response = self.http_client.get(url).send();
+        let response = self.http_client.get(url).send();
         response
     }
 
-    pub fn download<P>(&self, track: &Track, path: P) -> Result<usize>
-        where P: AsRef<Path> {
-        use std::io::ErrorKind;
+    pub fn download<W: Write>(&self, track: &Track, mut writer: W) -> Result<usize> {
         use hyper::header::Location;
 
         if !track.downloadable || !track.download_url.is_some() {
             return Err(Error::TrackNotDownloadable);
         }
 
-        let mut url = Url::parse(track.download_url.as_ref().unwrap()).unwrap();
-        url.query_pairs_mut().append_pair("client_id", &self.client_id);
-
-        let mut file = try!(File::create(path.as_ref()));
+        let url = self.parse_url(track.download_url.as_ref().unwrap());
         let mut response = try!(self.http_client.get(url).send());
-        let mut buffer = [0; 16384];
-        let mut len = 0;
-        let ret;
 
         // Follow the redirect just this once.
         if let Some(header) = response.headers.get::<Location>().cloned() {
             response = try!(self.http_client.get(Url::parse(&header).unwrap()).send());
         }
 
-        loop {
-            match response.read(&mut buffer) {
-                Ok(0) => {
-                    ret = Ok(len);
-                    break;
-                },
-                Ok(n) => {
-                    len += n;
-                    try!(file.write_all(&mut buffer[..n]));
-                },
-                Err(ref e) if e.kind() == ErrorKind::Interrupted => {},
-                Err(e) => {
-                    ret = Err(e.into());
-                    break;
-                }
-            }
-        }
-
-        ret
+        try!(io::copy(&mut response, &mut writer).map(|len| Ok(len as usize)))
     }
 
-    pub fn stream<F>(&self, track: &Track, mut callback: F) -> Result<usize>
-        where F: FnMut(&[u8]) {
-        use std::io::ErrorKind;
+    /// Starts streaming the track provided in the tracks `stream_url` to the `writer` if the track
+    /// is streamable via the API.
+    pub fn stream<W: Write>(&self, track: &Track, mut writer: W) -> Result<usize> {
         use hyper::header::Location;
 
         if !track.streamable || !track.stream_url.is_some() {
             return Err(Error::TrackNotStreamable);
         }
 
-        let mut url = Url::parse(track.stream_url.as_ref().unwrap()).unwrap();
-        url.query_pairs_mut().append_pair("client_id", &self.client_id);
-
+        let url = self.parse_url(track.stream_url.as_ref().unwrap());
         let mut response = try!(self.http_client.get(url).send());
-        let mut buffer = [0; 16384];
-        let mut len = 0;
-        let ret;
 
         // Follow the redirect just this once.
         if let Some(header) = response.headers.get::<Location>().cloned() {
             response = try!(self.http_client.get(Url::parse(&header).unwrap()).send());
         }
 
-        loop {
-            match response.read(&mut buffer) {
-                Ok(0) => {
-                    ret = Ok(len);
-                    break;
-                },
-                Ok(n) => {
-                    len += n;
-                    callback(&mut buffer[..n]);
-                },
-                Err(ref e) if e.kind() == ErrorKind::Interrupted => {},
-                Err(e) => {
-                    ret = Err(e.into());
-                    break;
-                }
-            }
-        }
-
-        ret
+        try!(io::copy(&mut response, &mut writer).map(|len| Ok(len as usize)))
     }
 
     /// Resolves any soundcloud resource and returns it as a `Url`.
     pub fn resolve(&self, url: &str) -> Result<Url> {
         use hyper::header::Location;
-        let request = self.get("/resolve", Some(&[("url", url)]));
+        let response = self.get("/resolve", Some(&[("url", url)]));
 
-        match request {
+        match response {
             Ok(response) => {
                 if let Some(header) = response.headers.get::<Location>() {
                     return Ok(Url::parse(header).unwrap());
@@ -217,9 +194,43 @@ impl Client {
         }
     }
 
-    /// Request soundcloud tracks.
+    /// Returns a builder for a single track-by-id request.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soundcloud::client::Client;
+    ///
+    /// let client = Client::new(env!("SOUNDCLOUD_CLIENT_ID"));
+    /// let track = client.track(262681089).get();
+    ///
+    /// assert_eq!(track.unwrap().id, 262681089);
+    /// ```
+    pub fn track(&self, id: usize) -> SingleTrackRequestBuilder {
+        SingleTrackRequestBuilder::new(self, id)
+    }
+
+    /// Returns a builder for searching tracks with multiple criteria.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soundcloud::client::Client;
+    ///
+    /// let client = Client::new(env!("SOUNDCLOUD_CLIENT_ID"));
+    /// let tracks = client.tracks().genres(Some(["HipHop"])).get();
+    ///
+    /// assert!(tracks.unwrap().expect("no tracks found").len() > 0);
+    /// ```
     pub fn tracks(&self) -> TrackRequestBuilder {
         TrackRequestBuilder::new(self)
+    }
+
+    /// Parses a string and returns a url with the client_id query parameter set.
+    fn parse_url<S: AsRef<str>>(&self, url: S) -> Url {
+        let mut url = Url::parse(url.as_ref()).unwrap();
+        url.query_pairs_mut().append_pair("client_id", &self.client_id);
+        url
     }
 }
 
@@ -257,24 +268,25 @@ mod tests {
 
     #[test]
     fn test_download_track() {
+        use std::fs::File;
+
         let client = client();
-        let track = client.tracks().id(262681089).get().unwrap();
-        let ret = client.download(&track, "hi.mp3");
+        let track = client.tracks().id(263801976).get().unwrap();
+        let mut file = File::create("hi.mp3").unwrap();
+        let ret = client.download(&track, &mut file);
 
         assert!(ret.unwrap() > 0);
     }
 
     #[test]
     fn test_stream_track() {
+        use std::io::BufWriter;
         let client = client();
         let track = client.tracks().id(262681089).get().unwrap();
-        let mut size = 0;
-        
-        let ret = client.stream(&track, |chunk: &[u8]| size += chunk.len());
+        let mut buffer = BufWriter::new(vec![]);
+        let len = client.stream(&track, &mut buffer);
 
-        let res = ret.unwrap();
-
-        assert!(size == res);
-        assert!(res > 0);
+        assert!(len.unwrap() > 0);
+        assert!(buffer.get_ref().len() > 0);
     }
 }

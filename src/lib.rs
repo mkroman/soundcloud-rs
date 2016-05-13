@@ -5,30 +5,29 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+//
+//! SoundCloud API library
+//!
+//! This soundcloud library provides an interface where you can query soundcloud for information
+//! about tracks and users.
 #![feature(custom_derive, plugin)]
 #![plugin(serde_macros)]
 extern crate url;
 extern crate hyper;
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 extern crate serde;
 extern crate serde_json;
 
-/// The host address for the API.
+/// The static host address for the API.
 pub const API_HOST: &'static str = "api.soundcloud.com";
 
 pub mod error;
 pub mod client;
 pub mod track;
 
-pub enum Resource {
-    Track(track::Track),
-}
-
+// Re-export commonly used resources.
+pub use track::Track;
+pub use client::{User, Comment, App};
 pub use client::Client;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-    }
-}
