@@ -114,7 +114,6 @@ impl Client {
     /// "https://soundcloud.com/firepowerrecs/afk-shellshock-kamikaze-promo-mix-lock-load-series-vol-20")]));
     ///
     /// let mut buffer = String::new();
-    ///
     /// response.unwrap().read_to_string(&mut buffer);
     ///
     /// assert!(!buffer.is_empty());
@@ -133,8 +132,6 @@ impl Client {
             }
         }
 
-        debug!("get {}", url);
-
         let response = self.http_client.get(url).send();
         response
     }
@@ -151,10 +148,11 @@ impl Client {
 
         // Follow the redirect just this once.
         if let Some(header) = response.headers.get::<Location>().cloned() {
-            response = try!(self.http_client.get(Url::parse(&header).unwrap()).send());
+            let url = Url::parse(&header).unwrap();
+            response = try!(self.http_client.get(url).send());
         }
 
-        try!(io::copy(&mut response, &mut writer).map(|len| Ok(len as usize)))
+        try!(io::copy(&mut response, &mut writer).map(|n| Ok(n as usize)))
     }
 
     /// Starts streaming the track provided in the tracks `stream_url` to the `writer` if the track
@@ -171,26 +169,22 @@ impl Client {
 
         // Follow the redirect just this once.
         if let Some(header) = response.headers.get::<Location>().cloned() {
-            response = try!(self.http_client.get(Url::parse(&header).unwrap()).send());
+            let url = Url::parse(&header).unwrap();
+            response = try!(self.http_client.get(url).send());
         }
 
-        try!(io::copy(&mut response, &mut writer).map(|len| Ok(len as usize)))
+        try!(io::copy(&mut response, &mut writer).map(|n| Ok(n as usize)))
     }
 
     /// Resolves any soundcloud resource and returns it as a `Url`.
     pub fn resolve(&self, url: &str) -> Result<Url> {
         use hyper::header::Location;
-        let response = self.get("/resolve", Some(&[("url", url)]));
+        let response = try!(self.get("/resolve", Some(&[("url", url)])));
 
-        match response {
-            Ok(response) => {
-                if let Some(header) = response.headers.get::<Location>() {
-                    return Ok(Url::parse(header).unwrap());
-                } else {
-                    return Err(Error::ApiError("expected location header".to_owned()));
-                }
-            }
-            Err(e) => return Err(e.into()),
+        if let Some(header) = response.headers.get::<Location>() {
+            Ok(Url::parse(header).unwrap())
+        } else {
+            Err(Error::ApiError("expected location header".to_owned()))
         }
     }
 
@@ -199,7 +193,7 @@ impl Client {
     /// # Examples
     ///
     /// ```
-    /// use soundcloud::client::Client;
+    /// use soundcloud::Client;
     ///
     /// let client = Client::new(env!("SOUNDCLOUD_CLIENT_ID"));
     /// let track = client.track(262681089).get();
@@ -215,7 +209,7 @@ impl Client {
     /// # Examples
     ///
     /// ```
-    /// use soundcloud::client::Client;
+    /// use soundcloud::Client;
     ///
     /// let client = Client::new(env!("SOUNDCLOUD_CLIENT_ID"));
     /// let tracks = client.tracks().genres(Some(["HipHop"])).get();
@@ -268,14 +262,17 @@ mod tests {
 
     #[test]
     fn test_download_track() {
-        use std::fs::File;
+        use std::fs;
+        use std::path::Path;
 
         let client = client();
+        let path = Path::new("hi.mp3");
         let track = client.tracks().id(263801976).get().unwrap();
-        let mut file = File::create("hi.mp3").unwrap();
+        let mut file = fs::File::create(path).unwrap();
         let ret = client.download(&track, &mut file);
 
         assert!(ret.unwrap() > 0);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
