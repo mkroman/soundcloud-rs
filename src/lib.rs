@@ -30,4 +30,5 @@ pub mod track;
 pub use track::Track;
 pub use client::{User, Comment, App};
 pub use client::Client;
+pub use error::Error;
 
