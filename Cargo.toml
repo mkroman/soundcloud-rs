@@ -8,10 +8,7 @@ env_logger = "0.3.3"
 hyper = "0.9.4"
 log = "0.3.6"
 serde = "0.7.0"
+serde_json = "0.7.0"
 serde_macros = "0.7.2"
 url = "1.0.0"
 
-[dependencies.serde_json]
-branch = "value-missing-field"
-git = "https://github.com/arcnmx/json.git"
-version = "0.7.0"
