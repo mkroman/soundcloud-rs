@@ -55,6 +55,7 @@ pub struct User {
     pub permalink_url: String,
     pub avatar_url: String,
     pub country: Option<String>,
+    pub full_name: Option<String>,
     pub city: Option<String>,
     pub description: Option<String>,
     #[serde(rename="discogs-name")]
