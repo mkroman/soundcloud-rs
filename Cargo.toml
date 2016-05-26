@@ -1,7 +1,12 @@
 [package]
-authors = ["Mikkel Kroman <mk@uplink.io>"]
 name = "soundcloud"
+authors = ["Mikkel Kroman <mk@uplink.io>"]
 version = "0.1.0"
+license = "MIT/Apache-2.0"
+keywords = ["soundcloud", "http", "api", "client"]
+repository = "https://github.com/mkroman/soundcloud"
+description = "SoundCloud API implementation in Rust"
+documentation = "https://mkroman.github.io/soundcloud/"
 
 [dependencies]
 env_logger = "0.3.3"
