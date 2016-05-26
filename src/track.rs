@@ -52,7 +52,7 @@ impl Filter {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Track {
     /// Integer ID.
     pub id: u64,

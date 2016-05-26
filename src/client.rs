@@ -25,7 +25,7 @@ pub struct Client {
     http_client: hyper::Client,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct App {
     pub id: usize,
     pub uri: String,
@@ -34,7 +34,7 @@ pub struct App {
     pub creator: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Comment {
     pub id: usize,
     pub uri: String,
@@ -46,7 +46,7 @@ pub struct Comment {
     pub track_id: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct User {
     pub id: usize,
     pub permalink: String,
