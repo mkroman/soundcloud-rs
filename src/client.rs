@@ -25,51 +25,87 @@ pub struct Client {
     http_client: hyper::Client,
 }
 
+/// Registered client application.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct App {
+    /// Integer ID.
     pub id: usize,
+    /// API resource URL.
     pub uri: String,
+    /// URL to the SoundCloud.com page
     pub permalink_url: String,
+    /// URL to an external site.
     pub external_url: String,
+    /// Username of the app creator.
     pub creator: Option<String>,
 }
 
+/// User comment.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Comment {
+    /// Integer ID.
     pub id: usize,
+    /// API resource URL.
     pub uri: String,
+    /// Time of creation, as an unparsed string.
     pub created_at: String,
+    /// HTML comment body.
     pub body: String,
+    /// Associated timestamp in milliseconds.
     pub timestamp: Option<usize>,
+    /// User ID of the commenter.
     pub user_id: usize,
+    /// Small representation of the commenters user.
     pub user: User,
+    /// The track ID of the related track.
     pub track_id: usize,
 }
 
+/// Registered user.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct User {
+    /// Integer ID.
     pub id: usize,
+    /// Permalink of the resource.
     pub permalink: String,
+    /// Username.
     pub username: String,
+    /// API resource URL.
     pub uri: String,
+    /// URL to the SoundCloud.com page.
     pub permalink_url: String,
+    /// URL to a JPEG image.
     pub avatar_url: String,
+    /// Country.
     pub country: Option<String>,
+    /// First and last name.
     pub full_name: Option<String>,
+    /// City.
     pub city: Option<String>,
+    /// Description, written by the user.
     pub description: Option<String>,
+    /// Discogs name.
     #[serde(rename="discogs-name")]
     pub discogs_name: Option<String>, // discogs-name
+    /// MySpace name.
     #[serde(rename="myspace-name")]
     pub myspace_name: Option<String>, // myspace-name
+    /// URL to a website.
     pub website: Option<String>,
+    /// Custom title for the website.
     #[serde(rename="website-title")]
     pub website_title: Option<String>, // website-title
+    /// Online status.
     pub online: Option<bool>,
+    /// Number of public tracks.
     pub track_count: Option<usize>,
+    /// Number of public playlists.
     pub playlist_count: Option<usize>,
+    /// Number of followers.
     pub followers_count: Option<usize>,
+    /// Number of followed users.
     pub followings_count: Option<usize>,
+    /// Number of favorited public tracks.
     pub public_favorites_count: Option<usize>,
     // pub avatar_data …
 }
