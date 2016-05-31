@@ -23,8 +23,8 @@ extern crate serde_json;
 pub const API_HOST: &'static str = "api.soundcloud.com";
 
 pub mod error;
-pub mod client;
-pub mod track;
+mod client;
+mod track;
 
 // Re-export commonly used resources.
 pub use track::Track;
